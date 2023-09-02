@@ -10,6 +10,9 @@
 #include <algorithm>
 #include <string>
 #include <string_view>
+#include <map>
+#include <optional>
+
 
 
 const uint32_t WIDTH = 800;
@@ -26,6 +29,14 @@ const std::vector<const char*> validationLayers = {
     const bool enableValidationLayers = true;       //Runs in debug build
 #endif
 
+//stores different Message Queue Indices
+struct QueueFamilyIndices {
+    std::optional<std::uint32_t> graphicsFamily;
+    
+    bool isComplete() {
+        return graphicsFamily.has_value();
+    }
+};
 
 //Create vkDebugUtilsMessengerEXT object
 VkResult CreateDebugUtilsMessengerEXT (VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
@@ -63,6 +74,7 @@ private:
     GLFWwindow* window;   //stores window for us.
     VkInstance instance;    //connection between your application and the Vulkan library
     VkDebugUtilsMessengerEXT debugMessenger;     //tell Vulkan about callback,
+    VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;    //stores selected graphics card, implicitly destroyed along with VKInstance
 
     //creating an instance involves specifing some details about the application to driver
     void createInstance() {
@@ -245,6 +257,76 @@ private:
         }
     }
 
+    //helper function for pickPhysicalDevice()
+    //Checks if passed device is suitable for the operation we want to perform
+    bool isDeviceSuitable(VkPhysicalDevice device) {
+        /* //Sample Code for an applcation requiring discrete graphics card and has gepmetry shaders
+        VkPhysicalDeviceProperties deviceProperties;  //device name, types and supported Vulkan version
+        vkGetPhysicalDeviceProperties(device, &deviceProperties);  //Get properties of device and store in deviceProperties
+        VkPhysicalDeviceFeatures deviceFeatures;  // optional features like texture compression, 64 bit floats, multi viewport rendering in VR 
+        vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+        return deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && deviceFeatures.geometryShader; */
+
+        QueueFamilyIndices indices = findQueueFamilies(device);
+        return indices.isComplete();
+    }
+    //Select a graphics card that supports the features we need. Select only one for now
+    void pickPhysicalDevice() {
+        //Listing the graphics cards is very similar to listing extensions and starts with querying just the number.
+        std::uint32_t deviceCount{0};
+        vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);  //stores the number of extension here
+
+        if(deviceCount == 0) { //0 devices with Vulkan support no need for going further.
+            throw std::runtime_error("failed to find GPUs with Vulkan support");
+        }
+
+        //allocate array to hold alll VkPhysicalDevice handles
+        std::vector<VkPhysicalDevice> devices(deviceCount);
+        vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
+
+        //Check for Device suitability
+        for (const auto& device : devices) {
+            if (isDeviceSuitable(device)) {
+                physicalDevice = device;
+                break;
+            }
+        }
+
+        if (physicalDevice == VK_NULL_HANDLE) {
+            throw std::runtime_error("failed to find a suitable GPU!");
+        }
+    }
+
+    QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
+        //Logic to find graphics queue family
+        QueueFamilyIndices indices;
+        
+        //Extract Queue Families Properties, similar pattern to  Physical Device and Extensions
+        std::uint32_t queueFamilyCount = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(device,  &queueFamilyCount, nullptr);
+
+        std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+        vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+
+
+        // Assign index to queue families that could be found
+
+        int i{0};
+        for (const auto& queueFamily : queueFamilies) {
+            if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+                indices.graphicsFamily = i;
+            }
+
+            //break early
+            if (indices.isComplete()) {
+                break;
+            }
+            i++;
+        }
+
+        return indices;
+    }
+
     void initWindow() {
         glfwInit();
         //Window hints
@@ -257,6 +339,7 @@ private:
     void initVulkan() {
         createInstance();
         setupDebugMessenger();
+        pickPhysicalDevice();     
     }
 
     void mainLoop() {
@@ -294,3 +377,4 @@ int main() {
 
     return EXIT_SUCCESS;
 }
+
