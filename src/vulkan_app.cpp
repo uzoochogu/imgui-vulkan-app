@@ -1,5 +1,6 @@
-#define GLFW_INCLUDE_VULKAN
+#define GLFW_INCLUDE_VULKAN    //GLFW will include Vulkan and do some checks
 #include <GLFW/glfw3.h>
+
 
 #include <iostream>
 #include <stdexcept>
@@ -12,6 +13,7 @@
 #include <string_view>
 #include <map>
 #include <optional>
+#include <set>
 
 
 
@@ -35,6 +37,7 @@ struct QueueFamilyIndices {
     
     bool isComplete() {
         return graphicsFamily.has_value();
+    
     }
 };
 
@@ -75,6 +78,9 @@ private:
     VkInstance instance;    //connection between your application and the Vulkan library
     VkDebugUtilsMessengerEXT debugMessenger;     //tell Vulkan about callback,
     VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;    //stores selected graphics card, implicitly destroyed along with VKInstance
+    VkDevice device;   //stores logical device handle
+    VkQueue graphicsQueue; //will store handle to the graphics queue, implicitly cleaned up on device destruction
+
 
     //creating an instance involves specifing some details about the application to driver
     void createInstance() {
@@ -313,7 +319,7 @@ private:
 
         int i{0};
         for (const auto& queueFamily : queueFamilies) {
-            if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+            if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) { //support drawing commands
                 indices.graphicsFamily = i;
             }
 
@@ -325,6 +331,61 @@ private:
         }
 
         return indices;
+    }
+
+    void createLogicalDevice() {
+        //Get Queue Family index
+        QueueFamilyIndices indices = findQueueFamilies(physicalDevice);  //pass in handle to the current physical device
+        
+        //populate Device Queue Create info        
+        VkDeviceQueueCreateInfo queueCreateInfo{};
+        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueCreateInfo.queueFamilyIndex = indices.graphicsFamily.value(); //value certain due to check in pickPhysicalDevice()
+        queueCreateInfo.queueCount = 1;
+
+        //Assign priority for scheduling command buffer execution - Required
+        float queuePriority = 1.0f;
+        queueCreateInfo.pQueuePriorities = &queuePriority;
+
+
+        //Specify used device features
+        VkPhysicalDeviceFeatures deviceFeatures{}; //we don't need anything special, so just define for now.
+
+        //Create the logical device
+        VkDeviceCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+
+        //Add pointers to the queue creation info and device features structs
+        createInfo.queueCreateInfoCount = 1; //only one queue specified
+        createInfo.pQueueCreateInfos = &queueCreateInfo; //pointer to all createInfo
+        createInfo.pEnabledFeatures = &deviceFeatures;
+
+        //The rest of info is like VkInstanceCreateInfo but device specific
+        createInfo.enabledExtensionCount = 0;
+
+        if (enableValidationLayers) {  
+            //ignored by current Vulkan implementation (Uses Instance specific Vlaidation). 
+            //Include for compatiblity reasons
+            createInfo.enabledLayerCount = static_cast<std::uint32_t>(validationLayers.size());
+            createInfo.ppEnabledLayerNames = validationLayers.data();
+        } else {
+            createInfo.enabledLayerCount = 0;
+        }
+
+        //No need for device specific extensions for now
+
+
+        //Instantiate logical device
+        //physical device to inteface with, queue and usage info, optional allocator callback,
+        //pointer to variable to store the logical device handle in.
+        if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create logical device!");
+        }
+
+        //Retrieves queue handles for each queue family.
+        //Passed logical device, queue family, queue index (0 in this case, since we are only creating one),
+        //pointer to variable to store queue handle in
+        vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
     }
 
     void initWindow() {
@@ -339,7 +400,8 @@ private:
     void initVulkan() {
         createInstance();
         setupDebugMessenger();
-        pickPhysicalDevice();     
+        pickPhysicalDevice();
+        createLogicalDevice();
     }
 
     void mainLoop() {
@@ -350,12 +412,13 @@ private:
     }
 
     void cleanup() {
+        //Logical devices don't interact directly with instances. Destroyed alone
+        vkDestroyDevice(device, nullptr);
+
         //Destroy Debug messenger if it exists
         if(enableValidationLayers) {
             DestroyDebugUtilsMessengerEXT(instance, debugMessenger, nullptr);
         }
-
-
         //cleanup once the window is closed
         vkDestroyInstance(instance, nullptr);   //VkInstance should only be destroyed on program exit, deallocator is ignored here
 
