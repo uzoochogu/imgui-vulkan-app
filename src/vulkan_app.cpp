@@ -105,6 +105,7 @@ private:
     
     VkFormat swapChainImageFormat;  //Store chosen format for swap chain images
     VkExtent2D swapChainExtent;     //Store chosen extent for swap chain images
+    std::vector<VkImageView> swapChainImageViews;   //member to store the images views in.
 
     //creating an instance involves specifing some details about the application to driver
     void createInstance() {
@@ -411,7 +412,18 @@ private:
         vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
     }
 
+    
+    //Used to create the VkSurface_KHR instance
+    void createSurface() {
+        //Takes simple paratmeters instead of a struct
+        //VkInstance, GLFW window pointer, custom allocator and pointer to VksurfaceKHR
+        if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create window surface!");
+        }
+    }
 
+    //Settings for Swap Chain
+    
     //Populates SwapChainSupportDetails struct
     SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device) {
         SwapChainSupportDetails details;
@@ -440,18 +452,7 @@ private:
         }
         return details;
     }
-    
-    //Used to create the VkSurface_KHR instance
-    void createSurface() {
-        //Takes simple paratmeters instead of a struct
-        //VkInstance, GLFW window pointer, custom allocator and pointer to VksurfaceKHR
-        if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create window surface!");
-        }
-    }
 
-    //Settings for Swap Chain
-    
     //Surface format
     //Pass the formats member of SwapChainSupportDetails
     VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
@@ -622,6 +623,43 @@ private:
         swapChainExtent = extent;
     }
 
+    void createImageViews() {
+        swapChainImageViews.resize(swapChainImages.size()); //resize to fit all of the image views we'll be creating
+
+        //Iterate over all of the swap chain images
+        for(std::size_t i = 0; i < swapChainImages.size(); i++) {
+            VkImageViewCreateInfo createInfo{};
+            createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            createInfo.image = swapChainImages[i];
+
+            //Specify how the image date should be interpreted.
+            createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            createInfo.format = swapChainImageFormat;
+
+            //The component field allow you to swizzle the color channels around.
+            //e.g map all the channels to red channel for a monochrome texture or
+            //map constant values of 0 and 1 to a channel
+            createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY; //stick to default mapping
+            createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+
+            //Define the image's purpose and part of image should be accessed
+            //Use images as color targets and no mipmapping levels or multiple layers
+            createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;  //used a color target
+            createInfo.subresourceRange.baseMipLevel = 0;
+            createInfo.subresourceRange.levelCount = 1;
+            createInfo.subresourceRange.baseArrayLayer = 0;
+            createInfo.subresourceRange.layerCount = 1;
+
+
+            //Call creation function (each should be explicitly destroyed)
+            if (vkCreateImageView(device, &createInfo, nullptr, &swapChainImageViews[i]) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create image views!");
+            }
+        }
+    }
+
     void initWindow() {
         glfwInit();
         //Window hints
@@ -638,6 +676,7 @@ private:
         pickPhysicalDevice();
         createLogicalDevice();
         createSwapChain();
+        createImageViews();
     }
 
     void mainLoop() {
@@ -648,6 +687,11 @@ private:
     }
 
     void cleanup() {
+        //Destroy views
+        for (auto imageView : swapChainImageViews) {
+            vkDestroyImageView(device, imageView, nullptr);
+        }
+
         //Destroy swapchain before the device
         vkDestroySwapchainKHR(device, swapChain, nullptr);
         //Logical devices don't interact directly with instances. Destroyed alone
