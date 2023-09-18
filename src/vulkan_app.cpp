@@ -16,11 +16,34 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <fstream>
 
 
 
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
+
+//Loading Shaders
+//Reads all bytes from specified file and return a byte array.
+static std::vector<char> readFile(const std::string& filename) {
+    std::ifstream file (filename, std::ios::ate | std::ios::binary); //start reading at the end of file.
+
+    if(!file.is_open()) {
+        throw std::runtime_error("failed to open file!");
+    }
+
+    //determine size of file  using read position
+    std::size_t fileSize = static_cast<std::size_t>(file.tellg());
+    std::vector<char> buffer(fileSize);  //allocate buffer to file size
+
+    //seek to beginning 
+    file.seekg(0);
+    file.read(buffer.data(), fileSize);
+
+    //close file and return bytes
+    file.close();
+    return buffer;
+}
 
 //Provided standard diagnostics validation layer bundled in the Vulkan SDK
 const std::vector<const char*> validationLayers = {
@@ -660,6 +683,70 @@ private:
         }
     }
 
+    //Creates graphics pipeline, loads shaders code
+    void createGraphicsPipeline() {
+        //load bytecode of the two shaders:
+        auto vertShaderCode = readFile("../../shaders/vert.spv"); //path relative to the executable
+        auto fragShaderCode = readFile("../../shaders/frag.spv");
+
+        std::cout << "Check for correct load\n";
+        std::cout << "Loaded vertex shader bytes: " << vertShaderCode.size() << "\n";
+        std::cout << "Loaded shader shader bytes: " << fragShaderCode.size() << "\n";
+
+        //Load ShaderModules:
+        VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+        VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+        //Programmable stage
+        //Create Pipeline Shader stage for Vertex Shader
+        VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
+        vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        //tells vulkan in which pipeline stage shader will be used. 
+        //Enums for other programmable stages exist
+        vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT; 
+        //specify the shader module containing the code
+        vertShaderStageInfo.module = vertShaderModule;
+        //The shader code entry point
+        vertShaderStageInfo.pName = "main";
+
+        //Create Pipeline Shader stage for Fragment Shader
+        VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+        fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        fragShaderStageInfo.module = fragShaderModule;
+        fragShaderStageInfo.pName = "main";
+
+
+        //Array to contain two structs
+        //Would be referenced in the pipeline creation
+        VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+
+
+        //Fixed function stage
+
+        //Shader Modules clean up
+        vkDestroyShaderModule (device, fragShaderModule, nullptr);
+        vkDestroyShaderModule (device, vertShaderModule, nullptr);
+    }
+
+    //Create VkShaderModule to wrap code passed into the graphics pipeline
+    VkShaderModule createShaderModule(const std::vector<char>& code) {
+        //specify pointet to the buffer witht he bytecode and length
+        VkShaderModuleCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        createInfo.codeSize = code.size();
+        //pCode is a uint32_t pointer
+        //reinterpret cast, data alignment assured for std::vector
+        createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data()); 
+
+        //create ShaderModule
+        VkShaderModule shaderModule; //only needed for pipeline creation
+        if(vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create shader module!");
+        }
+        return  shaderModule;
+    }
+    
     void initWindow() {
         glfwInit();
         //Window hints
@@ -677,6 +764,7 @@ private:
         createLogicalDevice();
         createSwapChain();
         createImageViews();
+        createGraphicsPipeline();
     }
 
     void mainLoop() {
