@@ -1,0 +1,1 @@
+Replace the directory of the glsc compiler with the directory of glsc in your Vulkan installation or system installation directory.
