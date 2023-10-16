@@ -132,6 +132,8 @@ private:
 
     VkRenderPass renderPass;  // store the render pass object 
     VkPipelineLayout pipelineLayout;  //uniform values for shaders that can be changed at drawing time
+    VkPipeline graphicsPipeline;  // holds the Graphics Pipeline object
+
 
     //creating an instance involves specifing some details about the application to driver
     void createInstance() {
@@ -912,6 +914,45 @@ private:
             throw std::runtime_error("failed to create pipeline layout!");
         }
 
+
+        //Creating the Graphics Pipeline
+        // Reference VkPipelineShaderStageCreateInfo structs
+        VkGraphicsPipelineCreateInfo pipelineInfo{};
+        pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        pipelineInfo.stageCount = 2;
+        pipelineInfo.pStages = shaderStages;
+        // Then we reference all the structures describing fixed function stage
+        pipelineInfo.pVertexInputState = &vertexInputInfo;
+        pipelineInfo.pInputAssemblyState = &inputAssembly;
+        pipelineInfo.pViewportState = &viewportState;
+        pipelineInfo.pRasterizationState = &rasterizer;
+        pipelineInfo.pMultisampleState = &multisampling;
+        pipelineInfo.pDepthStencilState = nullptr; //optional
+        pipelineInfo.pColorBlendState = &colorBlending;
+        pipelineInfo.pDynamicState = &dynamicState;
+        // Then the pipeline layout, a Vulkan handle and not a struct pointer
+        pipelineInfo.layout = pipelineLayout;
+        // Then the render pass and index of the subpass where grapphics pipeline is used
+        // We can use other render passes in this pipeline but it must be compatible with 
+        // renderPass
+        pipelineInfo.renderPass = renderPass;
+        pipelineInfo.subpass = 0;
+
+        // We are not deriving from another Graphics pipeline.
+        // We are using a single pipeline
+        pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Optional
+        pipelineInfo.basePipelineIndex = -1; // Optional
+
+        // Create Grpahics Pipeline
+        // Note that the function is designed to take multiple VkGraphicsPipelineCreateInfo 
+        // objects anbd create multiple VkPipeline object in a single call
+        // The second parameter was VK_NULL_HANDLE argument, references an 
+        // optional VkPipelineCache object to help reuse data across mutliple calls of the function
+        if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,  &pipelineInfo, nullptr,
+         &graphicsPipeline) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create graphics pipeline!");
+         }
+
         //Shader Modules clean up
         vkDestroyShaderModule (device, fragShaderModule, nullptr);
         vkDestroyShaderModule (device, vertShaderModule, nullptr);
@@ -964,6 +1005,8 @@ private:
     }
 
     void cleanup() {
+        //Destroy pipeline
+        vkDestroyPipeline(device, graphicsPipeline, nullptr);
         //Destroy pipelineLayout
         vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
         // Destroy render pass object after use throughout the program
