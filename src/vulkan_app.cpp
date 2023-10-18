@@ -129,6 +129,7 @@ private:
     VkFormat swapChainImageFormat;  //Store chosen format for swap chain images
     VkExtent2D swapChainExtent;     //Store chosen extent for swap chain images
     std::vector<VkImageView> swapChainImageViews;   //member to store the images views in.
+    std::vector<VkFramebuffer> swapChainFramebuffers; // member to hold framebuffers for images in swapchain
 
     VkRenderPass renderPass;  // store the render pass object 
     VkPipelineLayout pipelineLayout;  //uniform values for shaders that can be changed at drawing time
@@ -975,6 +976,37 @@ private:
         }
         return  shaderModule;
     }
+
+    // Creates framebuffers per image in swapchain
+    void createFramebuffers() {
+        //resize to hold all
+        swapChainFramebuffers.resize(swapChainImageViews.size());
+
+        // iterate through image views, create framebuffers from them
+        for (size_t i = 0; i < swapChainImageViews.size(); i++) {
+            VkImageView attachments[] = {
+                swapChainImageViews[i]
+            };
+            
+            // Create Framebuffer
+            VkFramebufferCreateInfo framebufferInfo{};
+            framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            // specify with which renderPass, the framebuffer needs to be compatible with.
+            // render pass must be compatible with framebuffer usually by having the same number and type 
+            // of attachments.
+            framebufferInfo.renderPass = renderPass;
+            framebufferInfo.attachmentCount = 1;
+            framebufferInfo.pAttachments = attachments;
+            framebufferInfo.width = swapChainExtent.width;
+            framebufferInfo.height = swapChainExtent.height;
+            // number of layers in image arrays, our swapchain images are single so 1
+            framebufferInfo.layers = 1;
+
+            if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &swapChainFramebuffers[i]) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create framebuffer!");
+            }
+        } 
+    }
     
     void initWindow() {
         glfwInit();
@@ -995,6 +1027,7 @@ private:
         createImageViews();
         createRenderPass();
         createGraphicsPipeline();
+        createFramebuffers();
     }
 
     void mainLoop() {
@@ -1005,6 +1038,12 @@ private:
     }
 
     void cleanup() {
+        // Delete after rendering, but before images views and render pass 
+        // it is based on 
+        for (auto framebuffer : swapChainFramebuffers) {
+            vkDestroyFramebuffer(device, framebuffer, nullptr);
+        }
+
         //Destroy pipeline
         vkDestroyPipeline(device, graphicsPipeline, nullptr);
         //Destroy pipelineLayout
