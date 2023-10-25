@@ -135,6 +135,8 @@ private:
     VkPipelineLayout pipelineLayout;  //uniform values for shaders that can be changed at drawing time
     VkPipeline graphicsPipeline;  // holds the Graphics Pipeline object
 
+    VkCommandPool commandPool;  // Command pools manage memory used to store the buffer. Command buffers are allocated from them.
+    VkCommandBuffer commandBuffer;  // To store CommandBuffers
 
     //creating an instance involves specifing some details about the application to driver
     void createInstance() {
@@ -1007,7 +1009,134 @@ private:
             }
         } 
     }
-    
+
+    // Command pools manage the memory that is used to store the buffers and command buffers are allocated from them. 
+    // We have to create a command pool before we can create command buffers. 
+    void createCommandPool() {
+        QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
+
+        VkCommandPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        // There are 2 possible flags for command pools
+        // This flag Allow command buffers to be rerecorded individually, without this, they would all have be reset together
+        poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        // Each command pool can only allocate command buffers that are submitted on a single type of queue. 
+        // We're going to record commands for drawing, which is why we've chosen the graphics queue family.
+        poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
+
+        // Create CommandPool
+        if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create command pool!");
+        }
+    }
+
+    void createCommandBuffer() {
+        VkCommandBufferAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.commandPool = commandPool;
+        // level specifies if the allocated command buffers are primary or secondary command buffers
+        // primary can be submitted to a queue for execution but can't be called from other command buffers.
+        // secondary can't be submitted but can be called from primary command buffers.
+        // secondary is helpful to reuse common operations from primary command buffers.
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        // number of buffers to allocate
+        allocInfo.commandBufferCount = 1;
+
+        if (vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer) != VK_SUCCESS) {
+            throw std::runtime_error("failed to allocate command buffers!");
+        }
+    }
+
+    // Writes commands we want to execute into a command buffer.
+    // We take in the VkCommandBuffer and the index of the current swapchain image we want to write to
+    void recordCommandBuffer(VkCommandBuffer commandBuffer, std::uint32_t imageIndex) {
+        // Call vkBeginCommandBuffer first
+
+        VkCommandBufferBeginInfo beginInfo{};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = 0;  //Optional
+        // pInheritanceInfo is only relevant for secondary command buffers. 
+        // It specifies which state to inherit from the calling primary command buffers.
+        beginInfo.pInheritanceInfo = nullptr;  //Optional
+
+        // Note that a if the command buffer was already recorded once, then another call will implicitly reset it.
+        // It is not possible to append commands at a later time.
+        if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+            throw std::runtime_error("failed to begin recording command buffer!");
+        }
+
+        VkRenderPassBeginInfo renderPassInfo{};
+        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        // pass in previously created renderPass
+        renderPassInfo.renderPass = renderPass;
+        // attachments to bind
+        // bind framebuffer for the swapchain image we want to draw to. 
+        // Using imageIndex parameter, we can pick the right framebuffer for the current swapchain image.
+        // Remember We created a framebuffer for each swap chain image where it is specified as a color attachment. 
+        renderPassInfo.framebuffer = swapChainFramebuffers[imageIndex];
+
+        //These 2 define the size of the render area. 
+        // The render area defines where shader loads and stores will take place
+        // Pixels outside this region will have undefined values.
+        // It should match size of attachments for best performance.
+        renderPassInfo.renderArea.offset = {0, 0};
+        renderPassInfo.renderArea.extent = swapChainExtent;
+
+        // clear color set to be black with 100% opacity
+        VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+        // clear values to use for VK_ATTACHMENT_LOAD_OP_CLEAR which we used 
+        // as load operation for the color attachment.
+        renderPassInfo.clearValueCount = 1;
+        renderPassInfo.pClearValues = &clearColor;
+
+        // Begin Render pass
+        // All functions that record commands have a vkCmd prefix
+        // They all return void, so no error handling until we've finished recording.
+        // First arg to a command is always the command buffer to record the channel to.
+        // Second param specifies the details of the render pass.
+        // Final parameter controls how the drawing commands within the render pass will be provided.
+        // in CONTENTS_INLINE commands will be embedded in the primary command buffer itself, 
+        // no secondary buffers will be executed 
+        vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+            // Bind graphics pipeline
+            // second param specifies if the pipeline object is graphics or compute pipline.
+            // Then we pass in the graphics pipeline (contians whic operations to execute and attachment to use)
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+            // Specify viewport and scissor state, since they were set to be dynamic
+            VkViewport viewport{};
+            viewport.x = 0.0f;
+            viewport.y = 0.0f;
+            viewport.width = static_cast<float>(swapChainExtent.width);
+            viewport.height = static_cast<float>(swapChainExtent.height);
+            viewport.minDepth = 0.0f;
+            viewport.maxDepth = 1.0f;
+            vkCmdSetViewport(commandBuffer, 0, 1, &viewport); 
+
+            VkRect2D scissor{};
+            scissor.offset = {0, 0};
+            scissor.extent = swapChainExtent;
+            vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+            // Draw command
+            // Params:
+            // Command Buffer
+            // vertexCount: Even though we don't have a vertex buffer, we technically still have 3 vertices to draw.
+            // instanceCount: Used for instanced rendering, use 1 if you're not doing that.
+            // firstVertex: Used as an offset into the vertex buffer, defines the lowest value of gl_VertexIndex.
+            // firstInstance: Used as an offset for instanced rendering, defines the lowest value of gl_InstanceIndex.
+            vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+
+        //end render pass
+        vkCmdEndRenderPass(commandBuffer);
+
+        //Finish recording the command buffer
+        if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+            throw std::runtime_error("failed to record command buffer!");
+        }
+    }
+
     void initWindow() {
         glfwInit();
         //Window hints
@@ -1028,6 +1157,8 @@ private:
         createRenderPass();
         createGraphicsPipeline();
         createFramebuffers();
+        createCommandPool();
+        createCommandBuffer();
     }
 
     void mainLoop() {
@@ -1038,6 +1169,7 @@ private:
     }
 
     void cleanup() {
+        vkDestroyCommandPool(device, commandPool, nullptr);
         // Delete after rendering, but before images views and render pass 
         // it is based on 
         for (auto framebuffer : swapChainFramebuffers) {
