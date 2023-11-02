@@ -23,6 +23,9 @@
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 
+// Number of frames to be processed concurrently
+const int MAX_FRAMES_IN_FLIGHT = 2; 
+
 //Loading Shaders
 //Reads all bytes from specified file and return a byte array.
 static std::vector<char> readFile(const std::string& filename) {
@@ -136,11 +139,13 @@ private:
     VkPipeline graphicsPipeline;  // holds the Graphics Pipeline object
 
     VkCommandPool commandPool;  // Command pools manage memory used to store the buffer. Command buffers are allocated from them.
-    VkCommandBuffer commandBuffer;  // To store CommandBuffers
+    std::vector<VkCommandBuffer> commandBuffers;  // To store CommandBuffers
 
-    VkSemaphore imageAvailableSemaphore; //semaphore signals image has been acquired from swapchain, ready for rendering.
-    VkSemaphore renderFinishedSemaphore; //semaphore signals rendering finished and it ready for presentation.
-    VkFence inFlightFence; //fence to make sure only one frame is rendering at a time.
+    std::vector<VkSemaphore> imageAvailableSemaphores; //semaphore signals image has been acquired from swapchain, ready for rendering.
+    std::vector<VkSemaphore> renderFinishedSemaphores; //semaphore signals rendering finished and it ready for presentation.
+    std::vector<VkFence> inFlightFences; //fence to make sure only one frame is rendering at a time.
+
+    std::uint32_t currentFrame = 0;   // frame index to keep track of current frame.
 
 
     //creating an instance involves specifing some details about the application to driver
@@ -1062,7 +1067,8 @@ private:
         }
     }
 
-    void createCommandBuffer() {
+    void createCommandBuffers() {
+        commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
         VkCommandBufferAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
         allocInfo.commandPool = commandPool;
@@ -1072,9 +1078,9 @@ private:
         // secondary is helpful to reuse common operations from primary command buffers.
         allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         // number of buffers to allocate
-        allocInfo.commandBufferCount = 1;
+        allocInfo.commandBufferCount = static_cast<std::uint32_t>(commandBuffers.size());
 
-        if (vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer) != VK_SUCCESS) {
+        if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()) != VK_SUCCESS) {
             throw std::runtime_error("failed to allocate command buffers!");
         }
     }
@@ -1171,6 +1177,11 @@ private:
     
     // Creates semaphores and fences used in the program
     void createSyncObjects(){
+        //resize sync objects
+        imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+        renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+        inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+
         //Fill VkSemaphoreCreateInfo struct
         VkSemaphoreCreateInfo semaphoreInfo{};
         // Current version of API doesn't have any req fields other than this
@@ -1184,13 +1195,15 @@ private:
         // signaled. 
         fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-        //creating the semaphores and fence , simialr pattern
-        if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphore) != VK_SUCCESS ||
-            vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphore) != VK_SUCCESS ||
-            vkCreateFence(device, &fenceInfo, nullptr, &inFlightFence) != VK_SUCCESS) {
-                throw std::runtime_error("failed to create synchronization objects - semaphores and fence - for a frame!");
+        // populate vectors
+        for(size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            //creating the semaphores and fence , similar pattern
+            if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS ||
+                vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS ||
+                vkCreateFence(device, &fenceInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS) {
+                    throw std::runtime_error("failed to create synchronization objects - semaphores and fences - for a frame!");
+            } 
         }
-
     }
 
     void drawFrame() {
@@ -1201,8 +1214,8 @@ private:
         // We set timeout to max value of 64 bit uint. (disabling timeout).
         // It waits for inFlightFence to be signaled, which is only signaled when
         // a frame has finished rendering.
-        vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
-        vkResetFences(device, 1, &inFlightFence); //Manually reset fence to unsignaled state
+        vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
+        vkResetFences(device, 1, &inFlightFences[currentFrame]); //Manually reset fence to unsignaled state
         
         //Acquiring an image from the swap chain
         std::uint32_t imageIndex;
@@ -1212,19 +1225,20 @@ private:
         // is finished using the image. So we can start drawing to it. We can specify a semaphore, fence or both.
         // last param specifies a variable to output the index of the swapchain image that has become available.
         // imageIndex refers to the swapChainImages array. We'll use this index to pick the VkFrameBuffer.
-        vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+        vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, 
+        &imageIndex);
         
         // Recording the command buffer
         // second param is a VkCommandBufferResetFlagBits, 0 for now. Nothing special.
-        vkResetCommandBuffer(commandBuffer, 0); // to make sure it is able to be recorded.
-        recordCommandBuffer(commandBuffer, imageIndex); // record the commands we want
+        vkResetCommandBuffer(commandBuffers[currentFrame], 0); // to make sure it is able to be recorded.
+        recordCommandBuffer(commandBuffers[currentFrame], imageIndex); // record the commands we want
 
         // Submitting the command buffer
         // Queue submission and synchronization
         VkSubmitInfo submitInfo{};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         // which semaphore to wait on before execution begins
-        VkSemaphore waitSemaphores[] = {imageAvailableSemaphore};
+        VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
         // which stage of the pipeline to wait
         // wait with writing colors to the image until it is available so specify stage of
         // graphics pipeline that writes to the color attachment.
@@ -1237,10 +1251,10 @@ private:
         submitInfo.pWaitDstStageMask = waitStages;
         // command buffer to actually submit for execution
         submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &commandBuffer;
+        submitInfo.pCommandBuffers = &commandBuffers[currentFrame];
 
         // Semaphores to signal once the command buffer(s) have finished execution.
-        VkSemaphore signalSemaphores[] = {renderFinishedSemaphore};
+        VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]};
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores = signalSemaphores;
 
@@ -1250,7 +1264,7 @@ private:
         // finshed execution. Due to this, we know when it is safe for the command buffer to 
         // be reused. On the next frame CPU will wait for this command to finish executing
         // before it records new commands into it.
-        if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFence) != VK_SUCCESS) {
+        if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS) {
             throw std::runtime_error("failed to submit draw command buffer!");
         } 
 
@@ -1280,6 +1294,9 @@ private:
         // will be added later, their failure does not necessarily mean the program
         // should terminate.
         vkQueuePresentKHR(presentQueue, &presentInfo); 
+
+        //increment current frame, loop around (0->1->0)
+        currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
  
     void initWindow() {
@@ -1303,7 +1320,7 @@ private:
         createGraphicsPipeline();
         createFramebuffers();
         createCommandPool();
-        createCommandBuffer();
+        createCommandBuffers();
         createSyncObjects();
     }
 
@@ -1320,9 +1337,11 @@ private:
 
     void cleanup() {
         // End of program, no synchronization is necessary
-        vkDestroySemaphore(device, renderFinishedSemaphore, nullptr);
-        vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
-        vkDestroyFence(device, inFlightFence, nullptr);
+        for (std::size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++){
+            vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
+            vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
+            vkDestroyFence(device, inFlightFences[i], nullptr);
+        }
 
         vkDestroyCommandPool(device, commandPool, nullptr);
         // Delete after rendering, but before images views and render pass 
