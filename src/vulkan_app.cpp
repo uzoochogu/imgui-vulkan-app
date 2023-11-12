@@ -1,5 +1,6 @@
 #define GLFW_INCLUDE_VULKAN    //GLFW will include Vulkan and do some checks
 #include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
 
 
 #include <iostream>
@@ -10,6 +11,7 @@
 #include <cstring>  //may be needed for cstring
 
 #include <vector>
+#include <array>
 #include <algorithm>  //necessary for std::clamp
 #include <string>
 #include <string_view>
@@ -19,7 +21,81 @@
 #include <fstream>
 
 
+// Vertex data
 
+// To be used in the vertex shader
+// GLM provides C++ types that exactly match vector types used 
+// in shader language
+struct Vertex {
+    glm::vec2 pos;
+    glm::vec3 color;
+
+    // A vertex binding describes at which rate to load data from memory throughout
+    // the vertices. It specifies the number of bytes between data entries and
+    // whether to move to the next data entry after each vertex or after each instance.
+    static VkVertexInputBindingDescription getBindingDescription() {
+        // All of our per-vertex data is packaed together in one array, so we're only
+        // going to have one binding. 
+        VkVertexInputBindingDescription bindingDescription{};
+
+        // This specifies the index of the binding in the array of bindings
+        bindingDescription.binding = 0;
+        // This specifies the number of bytes from one entry to the next
+        bindingDescription.stride = sizeof(Vertex);
+        // This determines how you mobe to the next data, either move after each 
+        // vertex or after each instance. We are moving after each instance.
+        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+        return bindingDescription;
+    }
+
+    // An attribute description struct describes how to extract a vertex attribute
+    // from a chunk of vertex data originating from a binding description. We have 
+    // two attributes, position and color.
+    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions() {
+        std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+
+        // Tells Vulkan from which binding the per-vertex data comes.
+        attributeDescriptions[0].binding = 0;
+        
+        // This references the location directive of the input in the vertex shader.
+        // e.g layout(location = 0) in vec2 inPosition;
+        // 0 is the position and has two 32-bit float components.
+        attributeDescriptions[0].location = 0;
+        
+        // Describes the type of data for the attribute.
+        // Albeit confusingly, they are specified using the same enumeration as color
+        // format. e.g. float: VK_FORMAT_R32_SFLOAT. use the format where the amount
+        // of color channels matches the number of components in the shader data type.
+        // Below is for a vec2.
+        attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+        
+        // format implicitly defines the byte size of attribute data and the offset
+        // parameter specifies  the number of bytes since the start of the per-vertex
+        // data to read from.
+        // The offset macro calculates the offest based on the fact that the binding is 
+        // loading one Vertex at a time and the position attribute (pos) is at an 
+        // offset of 0 bytes from the beginning of this struct. 
+        attributeDescriptions[0].offset = offsetof(Vertex, pos);
+
+        // color attribute is described similarly
+        attributeDescriptions[1].binding = 0;
+        attributeDescriptions[1].location = 1;
+        attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescriptions[1].offset = offsetof(Vertex, color);
+        return attributeDescriptions;
+    }
+};
+
+// Array of vertex data. The position and color values are combined into 
+// one array of vertices. (Interleaving vertex attributes)
+const std::vector<Vertex> vertices =  {
+    {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{0.05f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+};
+
+// Windowing and Vulkan attributes
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 
@@ -844,16 +920,24 @@ private:
         //Would be referenced in the pipeline creation
         VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
+        // Get vertex data
+        auto bindingDescription = Vertex::getBindingDescription();
+        auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
 
         //Fixed function stage
         //Vertex input
         //We are filling this struct to specify that there is no vertex data to load for now
         VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
         vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-        vertexInputInfo.vertexBindingDescriptionCount = 0;
-        vertexInputInfo.pVertexBindingDescriptions = nullptr; // Optional
-        vertexInputInfo.vertexAttributeDescriptionCount = 0;
-        vertexInputInfo.pVertexAttributeDescriptions = 0; // Optional
+        
+        // Set up graphics pipeline to accept vertex data
+        vertexInputInfo.vertexBindingDescriptionCount = 1;
+        vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(
+                    attributeDescriptions.size()
+                );
+        vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+        vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
 
 
         //Input Assembly
