@@ -1,5 +1,13 @@
 #version 450
 
+/* Take input from vertex buffer into vertex attibutes using 
+** the in keyword
+*/
+layout(location = 0) in vec2 inPosition;
+
+/*Pass in colors just like positions*/
+layout(location = 1) in vec3 inColor;
+
 /*Pass per-vertex colors to the fragment shader, so that it can output 
  interpolated values to the framebuffer.
 */
@@ -9,13 +17,6 @@ vec2 positions[3] = vec2[](
     vec2(0.0, -0.5),
     vec2(0.5, 0.5),
     vec2(-0.5, 0.5)
-);
-
-/*Array of colors just like positions*/
-vec3 colors[3] = vec3[](
-    vec3(1.0, 0.0, 0.0),
-    vec3(0.0, 1.0, 0.0),
-    vec3(0.0, 0.0, 1.0)
 );
 
 void main() {
