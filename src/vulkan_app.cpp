@@ -89,9 +89,16 @@ struct Vertex {
 
 // Array of vertex data. The position and color values are combined into 
 // one array of vertices. (Interleaving vertex attributes)
-const std::vector<Vertex> vertices =  {
+// RGB Triangle
+/* const std::vector<Vertex> vertices =  {
     {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    {{0.05f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+}; */
+// White, Green and Blue vertices
+const std::vector<Vertex> vertices = {
+    {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
+    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
     {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
 };
 
@@ -224,6 +231,9 @@ private:
     std::uint32_t currentFrame = 0;   // frame index to keep track of current frame.
 
     bool framebufferResized = false;  // true when a resize happens
+
+    VkBuffer vertexBuffer;    // vertex buffer handle.
+    VkDeviceMemory vertexBufferMemory;   // store handle of the memory and be allocatable from.
 
     //creating an instance involves specifing some details about the application to driver
     void createInstance() {
@@ -1152,6 +1162,83 @@ private:
         }
     }
 
+    std::uint32_t findMemoryType(std::uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+        // Query info about the available types of memory
+        VkPhysicalDeviceMemoryProperties memProperties;
+        vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+
+        // Find a memory type that is suitable for the vertex buffer
+        for (std::uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+            // The typeFilter parameter will be used to specify the bit field of memory
+            // types that are suitable. 
+            // We  also need to be able to write our vertex data to that memory
+            // We may have more than one desirable property, so we should check for equality 
+            // with the desired properties bit field.
+            if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) ==
+            properties) {
+                return i;
+            }
+        }
+        throw std::runtime_error("failed to find suitable memory type!");
+    }
+    void createVertexBuffer() {
+        // fill up VkBufferCreateInfo struct
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        // specifies the size of the buffer in bytes. 
+        bufferInfo.size = sizeof(vertices[0]) * vertices.size();
+        // usage indicates the use case of the data in the buffer
+        // Different purposes can be bitwised ORed.
+        // We are using as a vertex buffer
+        bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        // Just like swap chain images buffers can be owned by a specific queue family
+        // or shared between multiple at the same time. Here it is only used from the 
+        // graphics queue so stick to exclusive.
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        // Used to Configure sparse buffer memory (not relevant now)
+        bufferInfo.flags = 0;
+
+        if (vkCreateBuffer(device, &bufferInfo, nullptr, &vertexBuffer) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create vertex buffer!");
+        }
+        // Memory requirements
+        VkMemoryRequirements memRequirements;
+        vkGetBufferMemoryRequirements(device, vertexBuffer, &memRequirements);
+
+        // Memory allocation
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memRequirements.size;
+        // VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT indicates that we are
+        // able to map it so we can write to it from the CPU. 
+        // VK_MEMORY_PROPERTY_HOST_COHERENT_BIT ensures that the mapped memory always matches
+        // the contents of the allocated memory.
+        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, 
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+        if (vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
+            throw std::runtime_error("failed to allocate vertex buffer memory!");
+        }
+
+        // Once successful, associate this memory with the buffer
+        // The fourth param is the offset within the region of memory.
+        // If offset is non-zero, it is required to be divisible by 
+        // memRequirements.alignment
+        vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
+
+        // Filling the vertex buffer
+        void* data;
+        // allows us to access a region of specified memory resource defined by an offset and size
+        // here 0, bufferInfo,size. Use VK_WHOLE_SIZE to map to all the memory.
+        // No flags were passed is the 5th param (currently not supported, must be 0).
+        // Last param specifies output for the pointer to mapped memory
+        vkMapMemory(device, vertexBufferMemory, 0, bufferInfo.size, 0, &data);
+            // Now memcpy
+            memcpy(data, vertices.data(), static_cast<size_t>(bufferInfo.size));
+        vkUnmapMemory(device, vertexBufferMemory);
+
+    }
+
     void createCommandBuffers() {
         commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
         VkCommandBufferAllocateInfo allocInfo{};
@@ -1227,6 +1314,17 @@ private:
             // Then we pass in the graphics pipeline (contians whic operations to execute and attachment to use)
             vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
+            VkBuffer vertexBuffers[] = {vertexBuffer};
+            VkDeviceSize offsets[] = {0};
+            // Binds vertex buffers to bindings
+            // second param is the offset, third param is the number of bindings we're 
+            // going to specify vertex buffer for. 
+            // last twop are the array of vertex buffers to bind and byte offsets to start
+            // reading from.
+            vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+
+
+
             // Specify viewport and scissor state, since they were set to be dynamic
             VkViewport viewport{};
             viewport.x = 0.0f;
@@ -1245,11 +1343,11 @@ private:
             // Draw command
             // Params:
             // Command Buffer
-            // vertexCount: Even though we don't have a vertex buffer, we technically still have 3 vertices to draw.
+            // vertexCount: size of vertices contains this info
             // instanceCount: Used for instanced rendering, use 1 if you're not doing that.
             // firstVertex: Used as an offset into the vertex buffer, defines the lowest value of gl_VertexIndex.
             // firstInstance: Used as an offset for instanced rendering, defines the lowest value of gl_InstanceIndex.
-            vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+            vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
 
         //end render pass
         vkCmdEndRenderPass(commandBuffer);
@@ -1384,7 +1482,7 @@ private:
         // which stage of the pipeline to wait
         // wait with writing colors to the image until it is available so specify stage of
         // graphics pipeline that writes to the color attachment.
-        // Theoretically, implementation can already start executing our vertext shader
+        // Theoretically, implementation can already start executing our vertex shader
         // and such when image is not yet available.
         VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
         submitInfo.waitSemaphoreCount = 1;
@@ -1487,6 +1585,7 @@ private:
         createGraphicsPipeline();
         createFramebuffers();
         createCommandPool();
+        createVertexBuffer();
         createCommandBuffers();
         createSyncObjects();
     }
@@ -1514,6 +1613,12 @@ private:
 
         // Delete after rendering, but before render pass it is based on 
         cleanupSwapChain();
+
+        // vertex buffer should be available for use for rendering comands until the end
+        // of the program. No dependance on swap chain.
+        vkDestroyBuffer(device, vertexBuffer, nullptr);
+        // Free memory associate with buffer after buffer has been destroyed
+        vkFreeMemory(device, vertexBufferMemory, nullptr);
 
         //Destroy pipeline
         vkDestroyPipeline(device, graphicsPipeline, nullptr);
