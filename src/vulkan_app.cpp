@@ -1181,16 +1181,20 @@ private:
         }
         throw std::runtime_error("failed to find suitable memory type!");
     }
-    void createVertexBuffer() {
+    
+    // Handles all buffer creation operations
+    // buffer size, memory properties and usage are customizable.
+    // buffer and bufferMemory are out variables
+    void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
+    VkBuffer& buffer, VkDeviceMemory& bufferMemory) {
         // fill up VkBufferCreateInfo struct
         VkBufferCreateInfo bufferInfo{};
         bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         // specifies the size of the buffer in bytes. 
-        bufferInfo.size = sizeof(vertices[0]) * vertices.size();
+        bufferInfo.size = size;
         // usage indicates the use case of the data in the buffer
         // Different purposes can be bitwised ORed.
-        // We are using as a vertex buffer
-        bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        bufferInfo.usage = usage;
         // Just like swap chain images buffers can be owned by a specific queue family
         // or shared between multiple at the same time. Here it is only used from the 
         // graphics queue so stick to exclusive.
@@ -1198,25 +1202,20 @@ private:
         // Used to Configure sparse buffer memory (not relevant now)
         bufferInfo.flags = 0;
 
-        if (vkCreateBuffer(device, &bufferInfo, nullptr, &vertexBuffer) != VK_SUCCESS) {
+        if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
             throw std::runtime_error("failed to create vertex buffer!");
         }
         // Memory requirements
         VkMemoryRequirements memRequirements;
-        vkGetBufferMemoryRequirements(device, vertexBuffer, &memRequirements);
+        vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
 
         // Memory allocation
         VkMemoryAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
         allocInfo.allocationSize = memRequirements.size;
-        // VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT indicates that we are
-        // able to map it so we can write to it from the CPU. 
-        // VK_MEMORY_PROPERTY_HOST_COHERENT_BIT ensures that the mapped memory always matches
-        // the contents of the allocated memory.
-        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, 
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
 
-        if (vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
+        if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
             throw std::runtime_error("failed to allocate vertex buffer memory!");
         }
 
@@ -1224,19 +1223,89 @@ private:
         // The fourth param is the offset within the region of memory.
         // If offset is non-zero, it is required to be divisible by 
         // memRequirements.alignment
-        vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
+        vkBindBufferMemory(device, buffer, bufferMemory, 0);
+    }
+    
+    // Would be used to copy data between buffer. e.g. staging buffer in 
+    // CPU accessible memory to  vertex buffer
+    void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
+        VkCommandBufferAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandPool = commandPool;
+        allocInfo.commandBufferCount = 1;
 
-        // Filling the vertex buffer
+        VkCommandBuffer commandBuffer;
+        vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer);
+
+        // start recording the command buffer
+        VkCommandBufferBeginInfo beginInfo{};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        // We're only going to use the command buffer once and wait
+        // with returning from the function until the copy operation
+        // has finished executing. It is good practive to communicate this
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(commandBuffer, &beginInfo);
+            VkBufferCopy copyRegion{};
+            copyRegion.srcOffset = 0; // Optional
+            copyRegion.dstOffset = 0; // Optional
+            copyRegion.size = size;
+            // This function transfers the contents of tyhe buffer.
+            // It also takes the array of regions to copy. 
+            // The regions are defined in VkBufferCopy struct. It is not possible to 
+            // specify VK_WHOLE_SIZE here.
+            vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+        vkEndCommandBuffer(commandBuffer);
+
+        // Execute the command buffer
+        VkSubmitInfo submitInfo{};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &commandBuffer;
+
+        vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+        vkQueueWaitIdle(graphicsQueue);
+
+        // clean up the command buffer used for the transfer operation
+        vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+    }
+
+    void createVertexBuffer() {
+        VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+
+        // Temporary Buffer
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+
+        // usage is as a transfer src bit
+        // Memory property flag VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT indicates that we are
+        // able to map it so we can write to it from the CPU. 
+        // VK_MEMORY_PROPERTY_HOST_COHERENT_BIT ensures that the mapped memory always matches
+        // the contents of the allocated memory.
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | 
+                                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+        // Filling the staging buffer
         void* data;
         // allows us to access a region of specified memory resource defined by an offset and size
-        // here 0, bufferInfo,size. Use VK_WHOLE_SIZE to map to all the memory.
+        // here 0, bufferSize. Use VK_WHOLE_SIZE to map to all the memory.
         // No flags were passed is the 5th param (currently not supported, must be 0).
         // Last param specifies output for the pointer to mapped memory
-        vkMapMemory(device, vertexBufferMemory, 0, bufferInfo.size, 0, &data);
-            // Now memcpy
-            memcpy(data, vertices.data(), static_cast<size_t>(bufferInfo.size));
-        vkUnmapMemory(device, vertexBufferMemory);
+        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+            memcpy(data, vertices.data(), static_cast<size_t>(bufferSize)); // Now memcpy
+        vkUnmapMemory(device, stagingBufferMemory);
 
+        // usage is as a destination buffer for a transfer and a vertex buffer
+        // Memory property flag VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT indicates that the memory is
+        // device local. We can't use vkMapMemory  but can copy to it from a staging buffer.
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 
+                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
+
+        copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+
+        // Clean up staging memory
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
     }
 
     void createCommandBuffers() {
