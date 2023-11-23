@@ -96,10 +96,24 @@ struct Vertex {
     {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
 }; */
 // White, Green and Blue vertices
-const std::vector<Vertex> vertices = {
+/* const std::vector<Vertex> vertices = {
     {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
     {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
     {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+}; */
+
+// Rectangle with color - RGBW
+const std::vector<Vertex> vertices = {
+    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+};
+
+// index buffer
+// std::uint16_t for less than 65535 vertices
+const std::vector<std::uint16_t> indices = {
+    0, 1, 2, 2, 3, 0
 };
 
 // Windowing and Vulkan attributes
@@ -234,6 +248,9 @@ private:
 
     VkBuffer vertexBuffer;    // vertex buffer handle.
     VkDeviceMemory vertexBufferMemory;   // store handle of the memory and be allocatable from.
+
+    VkBuffer indexBuffer; // indices need to be uploaded in a GPU accessile buffer
+    VkDeviceMemory indexBufferMemory; 
 
     //creating an instance involves specifing some details about the application to driver
     void createInstance() {
@@ -1308,6 +1325,33 @@ private:
         vkFreeMemory(device, stagingBufferMemory, nullptr);
     }
 
+    // Similar to createVertexBuffer
+    void createIndexBuffer() {
+        VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+
+        // Temporary Buffer
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | 
+                                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+        // Filling the staging buffer
+        void* data;
+        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+            memcpy(data, indices.data(), static_cast<size_t>(bufferSize)); // Now memcpy
+        vkUnmapMemory(device, stagingBufferMemory);
+
+        // usage is as a destination buffer for a transfer and an index buffer
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 
+                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
+
+        copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+
+        // Clean up staging memory
+        vkDestroyBuffer(device, stagingBuffer, nullptr);
+        vkFreeMemory(device, stagingBufferMemory, nullptr);
+    }
+
     void createCommandBuffers() {
         commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
         VkCommandBufferAllocateInfo allocInfo{};
@@ -1388,10 +1432,13 @@ private:
             // Binds vertex buffers to bindings
             // second param is the offset, third param is the number of bindings we're 
             // going to specify vertex buffer for. 
-            // last twop are the array of vertex buffers to bind and byte offsets to start
+            // last two are the array of vertex buffers to bind and byte offsets to start
             // reading from.
             vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
 
+            // Binds index buffers
+            // Takes in index buffer, byte offset, type of index data
+            vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
 
             // Specify viewport and scissor state, since they were set to be dynamic
@@ -1416,7 +1463,17 @@ private:
             // instanceCount: Used for instanced rendering, use 1 if you're not doing that.
             // firstVertex: Used as an offset into the vertex buffer, defines the lowest value of gl_VertexIndex.
             // firstInstance: Used as an offset for instanced rendering, defines the lowest value of gl_InstanceIndex.
-            vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+            // vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+
+            // Similar to vkCmdDraw
+            // Params:
+            // Command Buffer
+            // indexCount - represents the number of vertices that will be passed to the vertex shader
+            // instanceCount (1, we are not using instancing),
+            // firstIndex - offset into the index buffer (1 means GPU would read from second index) 
+            // vertexOffset - offset to add to the index buffer
+            // firstInstance - offset for instancing (not used)
+            vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
         //end render pass
         vkCmdEndRenderPass(commandBuffer);
@@ -1655,6 +1712,7 @@ private:
         createFramebuffers();
         createCommandPool();
         createVertexBuffer();
+        createIndexBuffer();
         createCommandBuffers();
         createSyncObjects();
     }
@@ -1682,6 +1740,9 @@ private:
 
         // Delete after rendering, but before render pass it is based on 
         cleanupSwapChain();
+
+        vkDestroyBuffer(device, indexBuffer, nullptr);
+        vkFreeMemory(device, indexBufferMemory, nullptr);
 
         // vertex buffer should be available for use for rendering comands until the end
         // of the program. No dependance on swap chain.
