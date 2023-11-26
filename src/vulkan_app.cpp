@@ -1,7 +1,8 @@
 #define GLFW_INCLUDE_VULKAN    //GLFW will include Vulkan and do some checks
 #include <GLFW/glfw3.h>
+#define GLM_FORCE_RADIANS
 #include <glm/glm.hpp>
-
+#include <glm/gtc/matrix_transform.hpp>   // exposes functions that can be used to generate MVP transformations.
 
 #include <iostream>
 #include <stdexcept>
@@ -9,7 +10,7 @@
 #include <cstdint>   // for std::uint32_t
 #include <limits>   //Necessary for std::numeric_limits
 #include <cstring>  //may be needed for cstring
-
+#include <chrono>
 #include <vector>
 #include <array>
 #include <algorithm>  //necessary for std::clamp
@@ -85,6 +86,16 @@ struct Vertex {
         attributeDescriptions[1].offset = offsetof(Vertex, color);
         return attributeDescriptions;
     }
+};
+
+// Uniform buffer object  descriptor
+// GLM data types exactly matches the defintion in the shader
+// This is good for bianry compatibilty and operations like
+// memcpy a UBO to a VkBuffer.
+struct UniformBufferObject {
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
 };
 
 // Array of vertex data. The position and color values are combined into 
@@ -232,6 +243,7 @@ private:
     std::vector<VkFramebuffer> swapChainFramebuffers; // member to hold framebuffers for images in swapchain
 
     VkRenderPass renderPass;  // store the render pass object 
+    VkDescriptorSetLayout descriptorSetLayout; // contains all descriptor bindings.
     VkPipelineLayout pipelineLayout;  //uniform values for shaders that can be changed at drawing time
     VkPipeline graphicsPipeline;  // holds the Graphics Pipeline object
 
@@ -251,6 +263,10 @@ private:
 
     VkBuffer indexBuffer; // indices need to be uploaded in a GPU accessile buffer
     VkDeviceMemory indexBufferMemory; 
+
+    std::vector<VkBuffer> uniformBuffers;  // holds the multiple uniform buffer for frames in flight
+    std::vector<VkDeviceMemory> uniformBuffersMemory;
+    std::vector<void*> uniformBuffersMapped;
 
     //creating an instance involves specifing some details about the application to driver
     void createInstance() {
@@ -909,6 +925,36 @@ private:
         }
     }
 
+    void createDescriptorSetLayout() {
+        // Every binding needs to be described through this struct.
+        VkDescriptorSetLayoutBinding uboLayoutBinding{};
+        // binding used int he shader
+        uboLayoutBinding.binding = 0;
+        // type of descriptor is a Uniform buffer object
+        uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        // Number of values in the array
+        // Can be used the specify a transformation for each bones in a skeleton for
+        // skeletal animation for example. Our MVP transformation is in a single uniform 
+        // buffer object so 1 is specified.
+        uboLayoutBinding.descriptorCount = 1;
+        // the shader stage it is going to be referenced. It can be a combination of 
+        // VkShaderStageFlagBits values or VK_SHADER_STAGE_ALL_GRAPHICS
+        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        // only relevant for image smaple related descritors.
+        uboLayoutBinding.pImmutableSamplers = nullptr; // optional
+
+        // Create VkDescriptorSetLayout
+        // VkDescriptorSetLayoutCreateInfo
+        VkDescriptorSetLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = 1;
+        layoutInfo.pBindings = &uboLayoutBinding;
+
+        if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create descriptor set layout!");
+        }
+    }
+
     //Creates graphics pipeline, loads shaders code
     void createGraphicsPipeline() {
         //load bytecode of the two shaders:
@@ -1055,8 +1101,9 @@ private:
         //Pipeline layout
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipelineLayoutInfo.setLayoutCount = 0; // Optional
-        pipelineLayoutInfo.pSetLayouts = nullptr; // Optional
+        // Tell Vulkan which descriptors the shaders will be using
+        pipelineLayoutInfo.setLayoutCount = 1;
+        pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
         //Push constants are another way of passing dynamic values to shaders
         pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional  
         pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optional
@@ -1483,6 +1530,25 @@ private:
             throw std::runtime_error("failed to record command buffer!");
         }
     }
+
+    // allocates uniform buffers
+    void createUniformBuffers() {
+        VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+
+        uniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+        uniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
+        uniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);
+
+        for (std::size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i],
+            uniformBuffersMemory[i]);
+            // map buffer right after creation, to get a pointer to which we can write data later on.
+            // The buffer strays mapped to this pointer for the application's whole lifetime - Persistent mapping.
+            // this is used in all Vulkan implementations.
+            vkMapMemory(device, uniformBuffersMemory[i], 0, bufferSize, 0, &uniformBuffersMapped[i]);
+        }
+    }
     
     // Creates semaphores and fences used in the program
     void createSyncObjects(){
@@ -1590,6 +1656,8 @@ private:
             throw std::runtime_error("failed to acquire swap chain image!");
         }
 
+        updateUniformBuffer(currentFrame);
+
         // Only reset the fence if we are submitting work, this prevents a deadlock if we
         // return early without resetting.
         vkResetFences(device, 1, &inFlightFences[currentFrame]); //Manually reset fence to unsignaled state
@@ -1677,6 +1745,42 @@ private:
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
     }
 
+    // Generates a new tramsformation every frame to make the geometry spin around
+    // Depends on GLM/matrix_transform and chrono
+    void updateUniformBuffer(uint32_t currentImage) {
+        static auto startTime = std::chrono::high_resolution_clock::now();
+
+        auto currentTime = std::chrono::high_resolution_clock::now();
+        // Time since rendering has started
+        float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+        // Define the model, view and projection transformations in the ubo.
+        // Simple rotation about the Z-axis using the time variable
+        UniformBufferObject ubo{};
+        // model tranformations
+        // glm::rotate takes an existing transformation, rotationangle and rotation axis as params
+        // glm::mat4(1.0f) is an identity matrix, rotation angle is 90 degrees per second.
+        ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+
+        // view transformations
+        // look at the geometry from above at a 45 degree angle. params are: eye position, center position and
+        // up axis parameters.
+        ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+
+        // projection transformations
+        // Using a perspective projection with a 45 degree vertical FOV.
+        // other params are: aspect ratio, near  and far view view planes. We used the current swap chain extent to
+        // calculate aspect ratio, this takes new size into account incase of a resize.
+        ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float) swapChainExtent.height,0.1f, 10.0f);
+
+        // flip Y coordinate
+        // GLM was designed for OpenGL, where the Y coordinate of clip coordinates is inverted.
+        ubo.proj[1][1] *= -1;
+
+        // copy data in ubo to the current uniform buffer.
+        memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
+    }
+
     // Made static because GLFW does not know how to properly call a member function
     // with the right this pointer to our instance.
     // But we stored a pointer in GLFWwindow using glfwSetWindowUserPointer
@@ -1708,11 +1812,13 @@ private:
         createSwapChain();
         createImageViews();
         createRenderPass();
+        createDescriptorSetLayout();
         createGraphicsPipeline();
         createFramebuffers();
         createCommandPool();
         createVertexBuffer();
         createIndexBuffer();
+        createUniformBuffers();
         createCommandBuffers();
         createSyncObjects();
     }
@@ -1740,6 +1846,14 @@ private:
 
         // Delete after rendering, but before render pass it is based on 
         cleanupSwapChain();
+
+        // uniform data will be used for draw calls, buffer should be destroyed when we stop rendering
+        for (std::size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++){
+            vkDestroyBuffer(device, uniformBuffers[i], nullptr);
+            vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
+        }
+        // The descriptor layout should stick around while we may create new graphics pipelines 
+        vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
         vkDestroyBuffer(device, indexBuffer, nullptr);
         vkFreeMemory(device, indexBufferMemory, nullptr);
