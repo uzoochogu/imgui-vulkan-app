@@ -35,6 +35,7 @@
 struct Vertex {
   glm::vec2 pos;
   glm::vec3 color;
+  glm::vec2 texCoord;
 
   // A vertex binding describes at which rate to load data from memory
   // throughout the vertices. It specifies the number of bytes between data
@@ -59,9 +60,9 @@ struct Vertex {
   // An attribute description struct describes how to extract a vertex attribute
   // from a chunk of vertex data originating from a binding description. We have
   // two attributes, position and color.
-  static std::array<VkVertexInputAttributeDescription, 2>
+  static std::array<VkVertexInputAttributeDescription, 3>
   getAttributeDescriptions() {
-    std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+    std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
 
     // Tells Vulkan from which binding the per-vertex data comes.
     attributeDescriptions[0].binding = 0;
@@ -91,6 +92,14 @@ struct Vertex {
     attributeDescriptions[1].location = 1;
     attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
     attributeDescriptions[1].offset = offsetof(Vertex, color);
+
+    // texture attributes
+    attributeDescriptions[2].binding = 0;
+    attributeDescriptions[2].location = 2;
+    attributeDescriptions[2].format =
+        VK_FORMAT_R32G32_SFLOAT; // vec2 for texture coordinates
+    attributeDescriptions[2].offset = offsetof(Vertex, texCoord);
+
     return attributeDescriptions;
   }
 };
@@ -120,11 +129,13 @@ struct UniformBufferObject {
     {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
 }; */
 
-// Rectangle with color - RGBW
-const std::vector<Vertex> vertices = {{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-                                      {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-                                      {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-                                      {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}};
+// Rectangle vertices with color and texture - RGBW and RG
+// 0,0 in the top left corner to 1,1 in the bottom-right corner.
+const std::vector<Vertex> vertices = {
+    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}};
 
 // index buffer
 // std::uint16_t for less than 65535 vertices
@@ -1081,12 +1092,26 @@ private:
     // only relevant for image smaple related descritors.
     uboLayoutBinding.pImmutableSamplers = nullptr; // optional
 
+    // Binding for a combined image sampler descriptor
+    VkDescriptorSetLayoutBinding samplerLayoutBinding{};
+    samplerLayoutBinding.binding = 1;
+    samplerLayoutBinding.descriptorCount = 1;
+    samplerLayoutBinding.descriptorType =
+        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    samplerLayoutBinding.pImmutableSamplers = nullptr;
+    // we intend to user the descriptor in the fragment shader!! since we are
+    // determining color of fragment.
+    samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    std::array<VkDescriptorSetLayoutBinding, 2> bindings = {
+        uboLayoutBinding, samplerLayoutBinding};
+
     // Create VkDescriptorSetLayout
     // VkDescriptorSetLayoutCreateInfo
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 1;
-    layoutInfo.pBindings = &uboLayoutBinding;
+    layoutInfo.bindingCount = static_cast<std::uint32_t>(bindings.size());
+    layoutInfo.pBindings = bindings.data();
 
     if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr,
                                     &descriptorSetLayout) != VK_SUCCESS) {
@@ -2076,15 +2101,20 @@ private:
 
   // Allocate descriptor sets
   void createDescriptorPool() {
-    VkDescriptorPoolSize poolSize{};
-    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    std::array<VkDescriptorPoolSize, 2> poolSizes{};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     // We allocate one of these descriptors for every frame.
-    poolSize.descriptorCount = static_cast<std::uint32_t>(MAX_FRAMES_IN_FLIGHT);
+    poolSizes[0].descriptorCount =
+        static_cast<std::uint32_t>(MAX_FRAMES_IN_FLIGHT);
+    // Combined image sampler
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[0].descriptorCount =
+        static_cast<std::uint32_t>(MAX_FRAMES_IN_FLIGHT);
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.poolSizeCount = static_cast<std::uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
     // Also specify the maximum number of descriptor sets that may ne allocated
     poolInfo.maxSets = static_cast<std::uint32_t>(MAX_FRAMES_IN_FLIGHT);
     // determines if individual descriptor sets can be freed or not.
@@ -2132,34 +2162,54 @@ private:
       // to overwrite the whole buffer
       bufferInfo.range = sizeof(UniformBufferObject);
 
-      VkWriteDescriptorSet descriptorWrite{};
-      descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      // resources for a combined image sampler structure must be specified in a
+      // VkDescriptorImageInfo struct just like the buffer resource for a
+      // uniform buffer descriptor is specified in VkDescriptorBufferInfo
+      // struct.
+      VkDescriptorImageInfo imageInfo{};
+      imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      imageInfo.imageView = textureImageView;
+      imageInfo.sampler = textureSampler;
+
+      std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+      descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
       // the descriptor set and binding to update
-      descriptorWrite.dstSet = descriptorSets[i];
-      descriptorWrite.dstBinding = 0;
+      descriptorWrites[0].dstSet = descriptorSets[i];
+      descriptorWrites[0].dstBinding = 0;
       // descriptor can be arrays but not used here.
-      descriptorWrite.dstArrayElement = 0;
+      descriptorWrites[0].dstArrayElement = 0;
       // It's possible to update multiple descriptors at once in an array,
       // starting at index dstArrayElement
-      descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+      descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
       // how many array elements you want to update
-      descriptorWrite.descriptorCount = 1;
+      descriptorWrites[0].descriptorCount = 1;
 
       // These reference an array with descriptorCount structs that actually
       // configure the descriptor depending on the type you actually need to use
       // pBufferInfo is used for descriptors that refer to buffer data.
       // Our descriptor is based on buffers
-      descriptorWrite.pBufferInfo = &bufferInfo;
-      //  pImageInfo is used for descriptors that refer to image data, and
+      descriptorWrites[0].pBufferInfo = &bufferInfo;
+      descriptorWrites[0].pImageInfo = nullptr; // Optional
       //  pTexelBufferView is used for descriptors that refer to buffer views
-      descriptorWrite.pImageInfo = nullptr;       // Optional
-      descriptorWrite.pTexelBufferView = nullptr; // Optional
+      descriptorWrites[0].pTexelBufferView = nullptr; // Optional
+
+      descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      descriptorWrites[1].dstSet = descriptorSets[i];
+      descriptorWrites[1].dstBinding = 1;
+      descriptorWrites[1].dstArrayElement = 0;
+      descriptorWrites[1].descriptorType =
+          VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+      descriptorWrites[1].descriptorCount = 1;
+      //  pImageInfo is used for descriptors that refer to image data, and
+      descriptorWrites[1].pImageInfo = &imageInfo;
 
       // applies updates,  It accepts two kinds of arrays as parameters: an
       // array of VkWriteDescriptorSet and an array of VkCopyDescriptorSet. The
       // latter can be used to copy descriptors to each other, as its name
       // implies.
-      vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, nullptr);
+      vkUpdateDescriptorSets(
+          device, static_cast<std::uint32_t>(descriptorWrites.size()),
+          descriptorWrites.data(), 0, nullptr);
     }
   }
 
