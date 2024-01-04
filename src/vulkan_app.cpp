@@ -2107,8 +2107,8 @@ private:
     poolSizes[0].descriptorCount =
         static_cast<std::uint32_t>(MAX_FRAMES_IN_FLIGHT);
     // Combined image sampler
-    poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[0].descriptorCount =
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[1].descriptorCount =
         static_cast<std::uint32_t>(MAX_FRAMES_IN_FLIGHT);
 
     VkDescriptorPoolCreateInfo poolInfo{};
