@@ -34,6 +34,7 @@ target_link_libraries(imgui-app PRIVATE glfw)
 find_package(Vulkan REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(Stb REQUIRED)
+find_package(tinyobjloader CONFIG REQUIRED)
 
 message(STATUS "Directory: ${Vulkan_INCLUDE_DIRS}")
 
@@ -46,6 +47,7 @@ target_include_directories(vulkan_test PRIVATE ${Vulkan_INCLUDE_DIRS})
 target_include_directories(vulkan_app PRIVATE ${Vulkan_INCLUDE_DIRS})
 
 target_include_directories(vulkan_app PRIVATE ${Stb_INCLUDE_DIR})
+target_link_libraries(vulkan_app PRIVATE tinyobjloader::tinyobjloader_double)
 
 target_link_libraries(vulkan_test PRIVATE ${Vulkan_LIBRARIES})
 target_link_libraries(vulkan_app PRIVATE ${Vulkan_LIBRARIES})

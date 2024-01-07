@@ -8,9 +8,17 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp> // exposes functions that can be used to generate MVP transformations.
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/hash.hpp> // for hashing glm::vec data structures
+
 #define STB_IMAGE_IMPLEMENTATION // needed to include definitions (function
                                  // bodies)
 #include <stb_image.h>           // for loading images, only defines prototypes
+
+#define TINYOBJLOADER_IMPLEMENTATION // same as stb_image, should be included in
+                                     // at least 1 source file to avoid linker
+                                     // errors
+#include <tiny_obj_loader.h>         // for loading images
 
 #include <algorithm> //necessary for std::clamp
 #include <array>
@@ -27,6 +35,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 // Vertex data
@@ -104,7 +113,27 @@ struct Vertex {
 
     return attributeDescriptions;
   }
+
+  // Operators to enable usage in hash tables:
+  bool operator==(const Vertex &other) const {
+    return pos == other.pos && color == other.color &&
+           texCoord == other.texCoord;
+  }
 };
+
+// Hash calculation  for Vertex
+// template specialization for std::hash<T>
+namespace std {
+template <> struct hash<Vertex> {
+  size_t operator()(Vertex const &vertex) const {
+    // uses GLM gtx/hash.hpp hash functions
+    return ((hash<glm::vec3>()(vertex.pos) ^
+             (hash<glm::vec3>()(vertex.color) << 1)) >>
+            1) ^
+           (hash<glm::vec2>()(vertex.texCoord) << 1);
+  }
+};
+} // namespace std
 
 // Uniform buffer object  descriptor
 // GLM data types exactly matches the defintion in the shader
@@ -116,64 +145,13 @@ struct UniformBufferObject {
   alignas(16) glm::mat4 proj;
 };
 
-// Array of vertex data. The position and color values are combined into
-// one array of vertices. (Interleaving vertex attributes)
-// RGB Triangle
-/* const std::vector<Vertex> vertices =  {
-    {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
-}; */
-// White, Green and Blue vertices
-/* const std::vector<Vertex> vertices = {
-    {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
-    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
-}; */
-
-// Pseudo 3D Rectangle vertices with color and texture - RGBW and RG
-// 0,0 in the top left corner to 1,1 in the bottom-right corner.
-/* const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-    {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}}; */
-
-/*
-// Test this
-const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}
-}; */
-
-// New Vertices  3D and duplicated squares:
-const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
-
-    {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}};
-
-// index buffer
-// std::uint16_t for less than 65535 vertices
-// const std::vector<std::uint16_t> indices = {0, 1, 2, 2, 3, 0};
-
-// clang-format off
-const std::vector<uint16_t> indices = {
-    0, 1, 2, 2, 3, 0,
-    4, 5, 6, 6, 7, 4
-};
-// clang-format on
-
 // Windowing and Vulkan attributes
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
+
+// configuration variables
+const std::string MODEL_PATH = "../../models/viking_room.obj";
+const std::string TEXTURE_PATH = "../../textures/viking_room.png";
 
 // Number of frames to be processed concurrently
 const int MAX_FRAMES_IN_FLIGHT = 2;
@@ -324,7 +302,9 @@ private:
 
   bool framebufferResized = false; // true when a resize happens
 
-  VkBuffer vertexBuffer; // vertex buffer handle.
+  std::vector<Vertex> vertices;       // vertex data
+  std::vector<std::uint32_t> indices; // index data, stores indices
+  VkBuffer vertexBuffer;              // vertex buffer handle.
   VkDeviceMemory
       vertexBufferMemory; // store handle of the memory and be allocatable from.
 
@@ -1645,8 +1625,8 @@ private:
     // Pointer returned is the first element in the array of pixel values. The
     // pixels are laid out row by row with 4 bytes per pixel in the case of
     // STBI_rgb_alpha for a total of texWidth * texHeight * 4 values
-    stbi_uc *pixels = stbi_load("../../textures/texture.jpg", &texWidth,
-                                &texHeight, &texChannels, STBI_rgb_alpha);
+    stbi_uc *pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight,
+                                &texChannels, STBI_rgb_alpha);
     VkDeviceSize imageSize = texWidth * texHeight * 4;
 
     if (!pixels) {
@@ -2007,6 +1987,64 @@ private:
     endSingleTimeCommands(commandBuffer);
   }
 
+  void loadModel() {
+    // this container holds all of the positions(attrib.vertices),
+    // normals(.normals) and texture coords(.textcoords)
+    tinyobj::attrib_t attrib;
+    // contains all the separate objects and their face. Each face consists of
+    // an array of vertices(each containing position, normal and texture coord
+    // attributes). LoadObj triangulates faces by default.
+    std::vector<tinyobj::shape_t> shapes;
+    // Also define material and texture per face but will be ignored here.
+    std::vector<tinyobj::material_t> materials;
+    std::string warn, err; // to store warning during load
+
+    // loads model into libs data structures
+    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err,
+                          MODEL_PATH.c_str())) {
+      throw std::runtime_error(warn + err);
+    }
+
+    // will be used to prevent vertex duplication
+    std::unordered_map<Vertex, std::uint32_t> uniqueVertices{};
+
+    for (const auto &shape : shapes) {
+      // Triangluation already in effect, 3 vertices per face.
+      // index contains tinyobj::index_t::vertex_index, ::normal::index and
+      // texcoord_index. We use these indices to look up actual vertex
+      // attributes in the attrib arrrays
+      for (const auto &index : shape.mesh.indices) {
+        Vertex vertex{};
+
+        // mulitple by 3 and offset because it is an array of floats and not
+        // like glm::vec3
+        vertex.pos = {attrib.vertices[3 * index.vertex_index + 0],
+                      attrib.vertices[3 * index.vertex_index + 1],
+                      attrib.vertices[3 * index.vertex_index + 2]};
+
+        // similar multiplication. flip the vertical component of texture
+        // coordinates since we uploaded image to Vulkan in a top(0) to
+        // bottom(1) orientation rather than bottom(0) to top(1) of OBJ format.
+        vertex.texCoord = {attrib.texcoords[2 * index.texcoord_index + 0],
+                           1.0f -
+                               attrib.texcoords[2 * index.texcoord_index + 1]};
+
+        vertex.color = {1.0f, 1.0f, 1.0f};
+
+        // check if we have seen vertex with exact same position, color and
+        // texture coords if not, we add it to vertices
+        if (uniqueVertices.count(vertex) == 0) {
+          // store an index for that vertex (key)
+          uniqueVertices[vertex] = static_cast<std::uint32_t>(vertices.size());
+          vertices.push_back(vertex);
+        }
+
+        // lookup and use vertex index
+        indices.push_back(uniqueVertices[vertex]);
+      }
+    }
+  }
+
   void createVertexBuffer() {
     VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
 
@@ -2189,7 +2227,7 @@ private:
 
       // Binds index buffers
       // Takes in index buffer, byte offset, type of index data
-      vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+      vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
       // Specify viewport and scissor state, since they were set to be dynamic
       VkViewport viewport{};
@@ -2696,6 +2734,7 @@ private:
     createTextureImage();
     createTextureImageView();
     createTextureSampler();
+    loadModel();
     createVertexBuffer();
     createIndexBuffer();
     createUniformBuffers();
