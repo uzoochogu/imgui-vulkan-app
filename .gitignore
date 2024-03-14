@@ -1,0 +1,16 @@
+#build
+build/
+build-release/
+
+#vscode
+.vscode/
+
+#git
+
+
+#scrap
+/src/scrap.cpp
+/src/scrap-cmake.txt
+
+#compiled shaders
+resources/shaders/*.spv
