@@ -1106,8 +1106,9 @@ private:
   void createGraphicsPipeline() {
     // load bytecode of the two shaders:
     auto vertShaderCode =
-        readFile("shaders/vert.spv"); // path relative to the executable
-    auto fragShaderCode = readFile("shaders/frag.spv");
+        readFile("resources/shaders/vert.spv"); // path relative to the
+                                                // executable
+    auto fragShaderCode = readFile("resources/shaders/frag.spv");
 
 #ifndef NDEBUG
     std::cout << "Check for correct load\n";
@@ -1325,7 +1326,7 @@ private:
 
   void createComputePipeline() {
     auto computeShaderCode =
-        readFile("../../shaders/compute.spv"); // relative to the executable
+        readFile("resources/shaders/compute.spv"); // relative to the executable
 #ifndef NDEBUG
     std::cout << "Check for correct load\n";
     std::cout << "Loaded Compute shader bytes: " << computeShaderCode.size()

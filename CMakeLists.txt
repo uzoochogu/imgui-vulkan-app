@@ -65,8 +65,8 @@ if(MSVC)
   # Add post-build commands
   add_custom_command(TARGET vulkan_app POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_SOURCE_DIR}/resource
-        "$(TargetDir)/shaders" COMMENT
+        ${CMAKE_SOURCE_DIR}/resources
+        "$(TargetDir)/resources" COMMENT
         "copied resource folder from ${source} => ${destination}"
   )
 elseif(UNIX)
