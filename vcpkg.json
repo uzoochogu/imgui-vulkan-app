@@ -1,0 +1,42 @@
+{
+  "name": "imgui-vulkan-app",
+  "version": "0.0.1",
+  "dependencies": [
+    {
+      "name": "imgui",
+      "version>=": "1.90.2",
+      "features": [
+        "glfw-binding",
+        "opengl3-binding",
+        "vulkan-binding"
+      ]
+    },
+    {
+      "name": "glfw3",
+      "version>=": "3.4"
+    },
+    {
+      "name": "glad",
+      "version>=": "0.1.36"
+    },
+    {
+      "name": "glm",
+      "version>=": "1.0.1#1"
+    },
+    {
+      "name": "tinyobjloader",
+      "version>=": "2.0.0-rc9"
+    },
+    {
+      "name": "stb",
+      "version>=": "2023-04-11#1"
+    }
+  ],
+  "overrides": [
+    {
+      "name": "imgui",
+      "version": "1.90.2"
+    }
+  ],
+  "builtin-baseline": "a1a1cbc975abf909a6c8985a6a2b8fe20bbd9bd6"
+}

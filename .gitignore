@@ -8,6 +8,13 @@ build-release/
 # git
 .gitignore
 
+# scrap
+/src/scrap*
+
+# vcpkg
+vcpkg_installed/
+build/vcpkg_installed
+
 # compiled shaders
 resources/shaders/*.spv
 resources/compute-shaders/*.spv
