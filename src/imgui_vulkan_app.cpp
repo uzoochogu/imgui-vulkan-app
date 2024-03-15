@@ -22,7 +22,7 @@
 #define TINYOBJLOADER_IMPLEMENTATION // same as stb_image, should be included in
                                      // at least 1 source file to avoid linker
                                      // errors
-#include <tiny_obj_loader.h>         // for loading images
+#include <tiny_obj_loader.h>         // for loading obj models
 
 #include <algorithm> //necessary for std::clamp
 #include <array>
