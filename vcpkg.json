@@ -4,7 +4,7 @@
   "dependencies": [
     {
       "name": "imgui",
-      "version>=": "1.90.2",
+      "version>=": "1.90.7#1",
       "features": [
         "glfw-binding",
         "opengl3-binding",
@@ -35,7 +35,7 @@
   "overrides": [
     {
       "name": "imgui",
-      "version": "1.90.2"
+      "version": "1.90.7#1"
     }
   ],
   "builtin-baseline": "a1a1cbc975abf909a6c8985a6a2b8fe20bbd9bd6"

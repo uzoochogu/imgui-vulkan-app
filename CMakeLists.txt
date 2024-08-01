@@ -36,7 +36,7 @@ message(STATUS "Directory: ${Vulkan_INCLUDE_DIRS}")
 
 add_executable (vulkan_test src/vulkan_demo.cpp)
 add_executable (vulkan_app src/vulkan_app.cpp)
-add_executable (imgui-vulkan-app  src/imgui_vulkan_app.cpp)
+add_executable (imgui-vulkan-app  src/imgui_vulkan_app.cpp src/imgui_impl_vulkan.cpp)
 
 foreach( target IN ITEMS vulkan_test vulkan_app imgui-vulkan-app)
   message(STATUS "Configuring target: ${target}")
