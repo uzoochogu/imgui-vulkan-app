@@ -13,7 +13,7 @@ Each chapter of the vulkan tutorial is in branches:
 7. [`06-loading-models`](https://github.com/uzoochogu/imgui-vulkan-app/tree/06-loading-models)
 8. [`07-generating-mipmaps`](https://github.com/uzoochogu/imgui-vulkan-app/tree/07-generating-mipmaps)
 9. [`08-multisampling`](https://github.com/uzoochogu/imgui-vulkan-app/tree/08-multisampling)
-10. [`09-compute-shaders`](https://github.com/uzoochogu/imgui-vulkan-app/tree/09-compute-shaders)
+10. [`09-compute-shader`](https://github.com/uzoochogu/imgui-vulkan-app/tree/09-compute-shader)
 11. `main` branch contains an imgui-vulkan-app.cpp file that integrates imgui with the resulting vulkan renderer.
 
 ## Dependency managment
