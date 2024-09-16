@@ -48,14 +48,16 @@ endforeach()
 
 target_link_libraries(imgui-vulkan-app PRIVATE imgui::imgui)
 
-set(source "${CMAKE_SOURCE_DIR}/resources") 
+set(source "${CMAKE_SOURCE_DIR}/resources")
 set(destination "${CMAKE_CURRENT_BINARY_DIR}/resources") # or CMAKE_BINARY_DIR
 set( vulkan_apps  vulkan_app imgui-vulkan-app)
 
-if(MSVC) 
+if(MSVC)
   # Needed in Visual Studio to enable file access to non-local paths
-  # TargetDir is a VS macro containing path to executable directory 
-  set_target_properties(${vulkan_apps} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "$(TargetDir)" )
+  # TargetDir is a VS macro containing path to executable directory
+  set_target_properties(
+    ${vulkan_apps} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:${vulkan_apps}>/"
+  )
 
   # Copy compiled shaders to executable directory
   # Add post-build commands
@@ -81,4 +83,4 @@ else()
       ${destination} COMMENT
       "copied resource folder from ${source} => ${destination}"
   )
-endif() 
+endif()
